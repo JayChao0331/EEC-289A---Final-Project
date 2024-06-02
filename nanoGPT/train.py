@@ -21,6 +21,7 @@ import time
 import math
 import pickle
 from contextlib import nullcontext
+from collections import Counter, defaultdict
 
 import numpy as np
 import torch
@@ -130,9 +131,7 @@ def get_batch(split):
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
-    #print(x)
     y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
-    #print(y)
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
@@ -140,94 +139,115 @@ def get_batch(split):
         x, y = x.to(device), y.to(device)
     return x, y
 
+# Initialize N-gram counters
+n = 3  # You can adjust this to use a different N for the N-grams
+ngram_counts = defaultdict(Counter)
+context_counts = Counter()
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
 
-# attempt to derive vocab_size from the dataset
-meta_path = os.path.join(data_dir, 'meta.pkl')
-meta_vocab_size = None
-if os.path.exists(meta_path):
-    with open(meta_path, 'rb') as f:
-        meta = pickle.load(f)
-    meta_vocab_size = meta['vocab_size']
-    print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
+def extract_ngrams(data, n):
+    for i in range(len(data) - n):
+        context = tuple(data[i:i+n-1])
+        target = data[i+n-1]
+        ngram_counts[context][target] += 1
+        context_counts[context] += 1
+
+# Extract N-grams from training data
+train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+extract_ngrams(train_data, n)
+
+def get_ngram_probs(context):
+    if context not in ngram_counts:
+        return torch.ones(len(ngram_counts), dtype=torch.float32) / len(ngram_counts)  # Uniform distribution if context is unseen
+    target_counts = ngram_counts[context]
+    total_count = context_counts[context]
+    probs = torch.zeros(len(ngram_counts), dtype=torch.float32)
+    for target, count in target_counts.items():
+        probs[target] = count / total_count
+    return probs
 
 # model init
-# start with model_args from command line
-model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout, wind=wind,
-                  n_register_token=n_register_token, use_LLaMA_flag=use_LLaMA_flag, use_abs_softmax=use_abs_softmax)
-
+model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, dropout=dropout, bias=bias, vocab_size=None)
 if init_from == 'scratch':
-    # init a new model from scratch
     print("Initializing a new model from scratch")
-    # determine the vocab size we'll use for from-scratch training
-    if meta_vocab_size is None:
-        print("defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)")
-    model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
+    # determine the vocab size from the dataset
+    meta_path = os.path.join(data_dir, 'meta.pkl')
+    if not os.path.exists(meta_path):
+        print(f"No meta.pkl found, assuming GPT-2 encodings with vocab size of 50257")
+        vocab_size = 50257
+    else:
+        with open(meta_path, 'rb') as f:
+            meta = pickle.load(f)
+        vocab_size = meta['vocab_size']
+    model_args['vocab_size'] = vocab_size
     gptconf = GPTConfig(**model_args)
-    print("--------------------Input Configuration--------------------")
-    print(gptconf)
     model = GPT(gptconf)
+elif init_from.startswith('gpt2'):
+    print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
+    override_args = dict(dropout=dropout)
+    model = GPT.from_pretrained(init_from, override_args)
+    for k in model_args:
+        model_args[k] = getattr(model.config, k)  # will override the command line args
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
-    # resume training from a checkpoint.
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
     checkpoint = torch.load(ckpt_path, map_location=device)
     checkpoint_model_args = checkpoint['model_args']
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
-    # create the model
+    for k in model_args:
+        if k in checkpoint_model_args:
+            model_args[k] = checkpoint_model_args[k]
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
     state_dict = checkpoint['model']
-    # fix the keys of the state dictionary :(
-    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-    unwanted_prefix = '_orig_mod.'
-    for k,v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
     iter_num = checkpoint['iter_num']
     best_val_loss = checkpoint['best_val_loss']
-elif init_from.startswith('gpt2'):
-    print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
-    # initialize from OpenAI GPT-2 weights
-    override_args = dict(dropout=dropout)
-    model = GPT.from_pretrained(init_from, override_args)
-    # read off the created config params, so we can store them into checkpoint correctly
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = getattr(model.config, k)
-# crop down the model block size if desired, using model surgery
+
+# crop down the model block size if desired
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
-    model_args['block_size'] = block_size # so that the checkpoint will have the right value
 model.to(device)
-
-# initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
 if init_from == 'resume':
     optimizer.load_state_dict(checkpoint['optimizer'])
-checkpoint = None # free up memory
 
 # compile the model
 if compile:
     print("compiling the model... (takes a ~minute)")
     unoptimized_model = model
-    model = torch.compile(model) # requires PyTorch 2.0
+    model = torch.compile(model)  # requires PyTorch 2.0
+
+# initialize a GradScaler. If enabled=True scaler is used for autocasting
+scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # wrap model into DDP container
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 
-# helps estimate an arbitrarily accurate loss over either split using many batches
-@torch.no_grad()
+# logging
+if wandb_log and master_process:
+    import wandb
+    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+
+# learning rate decay scheduler (cosine with warmup)
+def get_lr(iter_num):
+    if iter_num < warmup_iters:
+        return learning_rate * iter_num / warmup_iters
+    if iter_num > lr_decay_iters:
+        return min_lr
+    decay_ratio = (iter_num - warmup_iters) / (lr_decay_iters - warmup_iters)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # goes from 1 to 0
+    return min_lr + coeff * (learning_rate - min_lr)
+
+# training loop
+X, Y = get_batch('train')  # fetch the very first batch
+t0 = time.time()
+
 def estimate_loss():
     out = {}
     model.eval()
@@ -242,108 +262,72 @@ def estimate_loss():
     model.train()
     return out
 
-# learning rate decay scheduler (cosine with warmup)
-def get_lr(it):
-    # 1) linear warmup for warmup_iters steps
-    if it < warmup_iters:
-        return learning_rate * it / warmup_iters
-    # 2) if it > lr_decay_iters, return min learning rate
-    if it > lr_decay_iters:
-        return min_lr
-    # 3) in between, use cosine decay down to min learning rate
-    decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-    assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
-    return min_lr + coeff * (learning_rate - min_lr)
+def compute_shannon_entropy(probs):
+    """Compute the Shannon entropy of a probability distribution."""
+    epsilon = 1e-9  # small value to avoid log(0)
+    entropy = -torch.sum(probs * torch.log(probs + epsilon), dim=-1)
+    return entropy.mean().item()
 
-# logging
-if wandb_log and master_process:
-    import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
-
-# training loop
-X, Y = get_batch('train') # fetch the very first batch
-t0 = time.time()
-local_iter_num = 0 # number of iterations in the lifetime of this process
-raw_model = model.module if ddp else model # unwrap DDP container if needed
-running_mfu = -1.0
 while True:
-
-    # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    lr = get_lr(iter_num)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-    # evaluate the loss on train/val sets and write checkpoints
-    if iter_num % eval_interval == 0 and master_process:
+    if iter_num % eval_interval == 0 and not iter_num == 0:
         losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-        if wandb_log:
+        entropy = compute_shannon_entropy(probs)
+        print(f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, entropy {entropy:.4f}")
+        if wandb_log and master_process:
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
+                "entropy": entropy,
                 "lr": lr,
-                "mfu": running_mfu*100, # convert to percentage
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
-            if iter_num > 0:
+            if master_process:
+                print(f"saving checkpoint to {out_dir}")
                 checkpoint = {
-                    'model': raw_model.state_dict(),
+                    'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'model_args': model_args,
                     'iter_num': iter_num,
                     'best_val_loss': best_val_loss,
-                    'config': config,
                 }
-                print(f"saving checkpoint to {out_dir}")
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
-    if iter_num == 0 and eval_only:
-        break
 
-    # forward backward update, with optional gradient accumulation to simulate larger batch size
-    # and using the GradScaler if data type is float16
     for micro_step in range(gradient_accumulation_steps):
-        if ddp:
-            # in DDP training we only need to sync gradients at the last micro step.
-            # the official way to do this is with model.no_sync() context manager, but
-            # I really dislike that this bloats the code and forces us to repeat code
-            # looking at the source of that context manager, it just toggles this variable
-            model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
             logits, loss = model(X, Y)
-            loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
-        # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        X, Y = get_batch('train')
-        # backward pass, with gradient scaling if training in fp16
+            ngram_context = tuple(X[:, -n+1:].cpu().numpy()[0])  # Assume batch size of 1 for simplicity
+            ngram_probs = get_ngram_probs(ngram_context)
+            entropy = compute_shannon_entropy(ngram_probs)
+            loss = loss / gradient_accumulation_steps
         scaler.scale(loss).backward()
-    # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-    # step the optimizer and scaler if training in fp16
     scaler.step(optimizer)
     scaler.update()
-    # flush the gradients as soon as we can, no need for this memory anymore
     optimizer.zero_grad(set_to_none=True)
 
-    # timing and logging
-    t1 = time.time()
-    dt = t1 - t0
-    t0 = t1
-    if iter_num % log_interval == 0 and master_process:
-        # get loss as float. note: this is a CPU-GPU sync point
-        # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
-        lossf = loss.item() * gradient_accumulation_steps
-        if local_iter_num >= 5: # let the training loop settle a bit
-            mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
-            running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
+    X, Y = get_batch('train')
     iter_num += 1
-    local_iter_num += 1
 
-    # termination conditions
+    if iter_num % log_interval == 0:
+        lossf = loss.item() * gradient_accumulation_steps
+        if master_process:
+            print(f"iter {iter_num}: loss {lossf:.4f}, entropy {entropy:.4f}")
+        if wandb_log and master_process:
+            wandb.log({
+                "iter": iter_num,
+                "train/loss": lossf,
+                "entropy": entropy,
+                "lr": lr,
+            })
+
     if iter_num > max_iters:
         break
 
