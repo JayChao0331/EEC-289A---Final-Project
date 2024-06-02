@@ -158,14 +158,16 @@ def extract_ngrams(data, n):
 train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
 extract_ngrams(train_data, n)
 
-def get_ngram_probs(context):
-    if context not in ngram_counts:
-        return torch.ones(len(ngram_counts), dtype=torch.float32) / len(ngram_counts)  # Uniform distribution if context is unseen
-    target_counts = ngram_counts[context]
-    total_count = context_counts[context]
-    probs = torch.zeros(len(ngram_counts), dtype=torch.float32)
-    for target, count in target_counts.items():
-        probs[target] = count / total_count
+def get_ngram_probs(context, vocab_size):
+    probs = torch.zeros(vocab_size, dtype=torch.float32)
+    alpha = 1  # Add-smoothing parameter
+    if context in ngram_counts:
+        target_counts = ngram_counts[context]
+        total_count = context_counts[context] + alpha * vocab_size
+        for target in range(vocab_size):
+            probs[target] = (target_counts[target] + alpha) / total_count
+    else:
+        probs.fill_(1 / vocab_size)  # Uniform distribution for unseen contexts
     return probs
 
 # model init
@@ -263,8 +265,8 @@ def estimate_loss():
     return out
 
 def compute_shannon_entropy(probs):
-    """Compute the Shannon entropy of a probability distribution."""
-    epsilon = 1e-9  # small value to avoid log(0)
+    epsilon = 1e-9
+    probs = probs / probs.sum(dim=-1, keepdim=True)  # Ensure normalization
     entropy = -torch.sum(probs * torch.log(probs + epsilon), dim=-1)
     return entropy.mean().item()
 
@@ -275,7 +277,10 @@ while True:
 
     if iter_num % eval_interval == 0 and not iter_num == 0:
         losses = estimate_loss()
-        entropy = compute_shannon_entropy(probs)
+        with torch.no_grad():
+            logits, _ = model(X, Y)
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            entropy = compute_shannon_entropy(probs)
         print(f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, entropy {entropy:.4f}")
         if wandb_log and master_process:
             wandb.log({
@@ -302,7 +307,7 @@ while True:
         with ctx:
             logits, loss = model(X, Y)
             ngram_context = tuple(X[:, -n+1:].cpu().numpy()[0])  # Assume batch size of 1 for simplicity
-            ngram_probs = get_ngram_probs(ngram_context)
+            ngram_probs = get_ngram_probs(ngram_context, model.config.vocab_size)
             entropy = compute_shannon_entropy(ngram_probs)
             loss = loss / gradient_accumulation_steps
         scaler.scale(loss).backward()
