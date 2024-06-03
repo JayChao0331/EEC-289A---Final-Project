@@ -21,20 +21,6 @@ def preprocess_text(text):
     return text
 
 
-# 生成N-gram
-def generate_ngrams(text, N):
-    ngrams = defaultdict(int)
-    for i in range(len(text) - N + 1):
-        gram = text[i:i + N]
-        ngrams[gram] += 1
-    return ngrams
-
-
-# 計算熵
-def calculate_entropy(probabilities):
-    return -sum(p * torch.log(p) for p in probabilities if p > 0)
-
-
 # 預測下一個字符並計算熵
 def predict_next_char_and_entropy(context, model, tokenizer):
     input_ids = tokenizer.encode(context, return_tensors='pt')
@@ -52,7 +38,7 @@ def predict_next_char_and_entropy(context, model, tokenizer):
         total_probability = valid_probabilities.sum()
         normalized_probabilities = valid_probabilities / total_probability
 
-        entropy = calculate_entropy(normalized_probabilities)
+        entropy = -sum(p * torch.log(p) for p in normalized_probabilities if p > 0)
 
         predicted_token_index = normalized_probabilities.argmax()
         next_char = valid_tokens[predicted_token_index]
