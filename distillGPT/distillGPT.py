@@ -82,13 +82,11 @@ def train(model, tokenizer, dataset, epochs=1, batch_size=4, lr=5e-5):
             optimizer.zero_grad()
             print(f"Epoch: {epoch}, Loss: {loss.item()}")
 
-
 url = "https://www.gutenberg.org/files/100/100-0.txt"
 text = load_text_from_url(url)
 dataset = TextDataset(text, tokenizer)
 train(model, tokenizer, dataset, epochs=1, batch_size=32, lr=5e-5)  # 修改epochs參數
 processed_text = preprocess_text(text)
-
 N = 3 
 ngrams = [processed_text[i:i + N - 1] for i in range(len(processed_text) - N + 1)]
 
