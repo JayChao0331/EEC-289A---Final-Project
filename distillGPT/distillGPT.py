@@ -5,7 +5,6 @@ import re
 import requests
 from collections import defaultdict
 
-# 加載DistilGPT模型和tokenizer
 model_name = "distilgpt2"
 tokenizer = GPT2Tokenizer.from_pretrained(model_name)
 model = GPT2LMHeadModel.from_pretrained(model_name)
@@ -14,14 +13,12 @@ model = GPT2LMHeadModel.from_pretrained(model_name)
 tokenizer.pad_token = tokenizer.eos_token
 
 
-# 文本預處理函數
 def preprocess_text(text):
     text = text.lower()
     text = re.sub(r'[^a-z\s]', '', text)
     return text
 
 
-# 預測下一個字符並計算熵
 def predict_next_char_and_entropy(context, model, tokenizer):
     input_ids = tokenizer.encode(context, return_tensors='pt')
     with torch.no_grad():
@@ -46,14 +43,12 @@ def predict_next_char_and_entropy(context, model, tokenizer):
     return next_char, dict(zip(valid_tokens, normalized_probabilities)), entropy.item()
 
 
-# 從URL加載文本
 def load_text_from_url(url):
     response = requests.get(url)
     response.raise_for_status()
     return response.text
 
 
-# 自定義collate函數
 def collate_fn(batch):
     input_ids = [item for item in batch]
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
@@ -76,7 +71,6 @@ class TextDataset(Dataset):
         return torch.tensor(self.examples[item], dtype=torch.long)
 
 
-# 訓練函數
 def train(model, tokenizer, dataset, epochs=1, batch_size=4, lr=5e-5):
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -97,29 +91,20 @@ def train(model, tokenizer, dataset, epochs=1, batch_size=4, lr=5e-5):
             print(f"Epoch: {epoch}, Loss: {loss.item()}")
 
 
-# 示例URL
 url = "https://www.gutenberg.org/files/100/100-0.txt"
 text = load_text_from_url(url)
-# text = "Hello, this is a test."
 
-# 創建數據集
 dataset = TextDataset(text, tokenizer)
-
-# 微調模型
 train(model, tokenizer, dataset, epochs=1, batch_size=32, lr=5e-5)  # 修改epochs參數
-
-# 預處理文本
 processed_text = preprocess_text(text)
-N = 3  # 例如三元組（trigram）
+N = 3 
 
-# 計算N-gram並預測和計算熵
 ngrams = [processed_text[i:i + N - 1] for i in range(len(processed_text) - N + 1)]
 
 print("Testing phase predictions:")
 for context in ngrams:
     next_char, probabilities, entropy = predict_next_char_and_entropy(context, model, tokenizer)
     print(f"Context: {context}, Next Char: {next_char}, Entropy: {entropy}")
-    # 顯示27個字元（a-z和空格）的概率
     # print(f"Probabilities: {probabilities}")
     # sorted_probabilities = dict(sorted(probabilities.items(), key=lambda item: item[1], reverse=True))
     # print(f"Sorted Probabilities: {sorted_probabilities}")
