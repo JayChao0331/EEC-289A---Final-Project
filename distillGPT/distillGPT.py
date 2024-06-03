@@ -8,16 +8,12 @@ from collections import defaultdict
 model_name = "distilgpt2"
 tokenizer = GPT2Tokenizer.from_pretrained(model_name)
 model = GPT2LMHeadModel.from_pretrained(model_name)
-
-# 設置填充標記
 tokenizer.pad_token = tokenizer.eos_token
-
 
 def preprocess_text(text):
     text = text.lower()
     text = re.sub(r'[^a-z\s]', '', text)
     return text
-
 
 def predict_next_char_and_entropy(context, model, tokenizer):
     input_ids = tokenizer.encode(context, return_tensors='pt')
@@ -42,20 +38,16 @@ def predict_next_char_and_entropy(context, model, tokenizer):
 
     return next_char, dict(zip(valid_tokens, normalized_probabilities)), entropy.item()
 
-
 def load_text_from_url(url):
     response = requests.get(url)
     response.raise_for_status()
     return response.text
-
 
 def collate_fn(batch):
     input_ids = [item for item in batch]
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
     return input_ids
 
-
-# 準備數據集
 class TextDataset(Dataset):
     def __init__(self, text, tokenizer, block_size=128):
         self.examples = []
@@ -93,15 +85,13 @@ def train(model, tokenizer, dataset, epochs=1, batch_size=4, lr=5e-5):
 
 url = "https://www.gutenberg.org/files/100/100-0.txt"
 text = load_text_from_url(url)
-
 dataset = TextDataset(text, tokenizer)
 train(model, tokenizer, dataset, epochs=1, batch_size=32, lr=5e-5)  # 修改epochs參數
 processed_text = preprocess_text(text)
-N = 3 
 
+N = 3 
 ngrams = [processed_text[i:i + N - 1] for i in range(len(processed_text) - N + 1)]
 
-print("Testing phase predictions:")
 for context in ngrams:
     next_char, probabilities, entropy = predict_next_char_and_entropy(context, model, tokenizer)
     print(f"Context: {context}, Next Char: {next_char}, Entropy: {entropy}")
@@ -109,4 +99,3 @@ for context in ngrams:
     # sorted_probabilities = dict(sorted(probabilities.items(), key=lambda item: item[1], reverse=True))
     # print(f"Sorted Probabilities: {sorted_probabilities}")
     # print(f"Total Probability: {sum(probabilities.values())}")
-    # break  # 只顯示第一個結果，避免輸出過多信息
