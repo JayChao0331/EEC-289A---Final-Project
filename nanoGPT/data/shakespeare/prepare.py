@@ -2,6 +2,13 @@ import os
 import requests
 import tiktoken
 import numpy as np
+import re
+
+# convert all uppercase to lower, keep space char, remove punctuation, 26 letter + 1 space char = 27
+def process_text(content):
+    content = content.lower()
+    processed_content = re.sub(r'[^a-z\s]', '', content)
+    return processed_content
 
 # download the tiny shakespeare dataset
 input_file_path = os.path.join(os.path.dirname(__file__), 'input.txt')
@@ -12,6 +19,8 @@ if not os.path.exists(input_file_path):
 
 with open(input_file_path, 'r', encoding='utf-8') as f:
     data = f.read()
+
+data = process_text(data)
 n = len(data)
 train_data = data[:int(n*0.9)]
 val_data = data[int(n*0.9):]
