@@ -12,6 +12,7 @@ from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
 import torch._dynamo
+
 torch._dynamo.config.suppress_errors = True
 
 # -----------------------------------------------------------------------------
@@ -59,7 +60,7 @@ device = 'cuda'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
 compile = True
 # -----------------------------------------------------------------------------
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
+config_keys = [k for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read())
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
@@ -93,28 +94,30 @@ device_type = 'cuda' if 'cuda' in device else 'cpu'
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-# poor man's data loader
 data_dir = os.path.join('data', dataset)
+
 def get_batch(split):
     if split == 'train':
         data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
     else:
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
     ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
-    y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
+    x = torch.stack([torch.from_numpy((data[i:i + block_size]).astype(np.int64)) for i in ix])
+    y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
         x, y = x.to(device), y.to(device)
     return x, y
 
+
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
 
 # model init
-model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, dropout=dropout, bias=bias, vocab_size=None)
+model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, dropout=dropout, bias=bias,
+                  vocab_size=None)
 if init_from == 'scratch':
     print("Initializing a new model from scratch")
     meta_path = os.path.join(data_dir, 'meta.pkl')
@@ -169,6 +172,7 @@ if ddp:
 
 if wandb_log and master_process:
     import wandb
+
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 def get_lr(iter_num):
@@ -180,9 +184,6 @@ def get_lr(iter_num):
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (learning_rate - min_lr)
-
-X, Y = get_batch('train')
-t0 = time.time()
 
 def estimate_loss():
     out = {}
@@ -200,38 +201,44 @@ def estimate_loss():
 
 def compute_shannon_entropy(probs):
     epsilon = 1e-9
-    probs = probs / probs.sum(dim=-1, keepdim=True)  # Ensure normalization
-    entropy = -torch.sum(probs * torch.log(probs + epsilon), dim=-1)
+    #print(sum(probs[0]))
+    probs = probs / sum(probs[0])
+    tensor_probs = torch.from_numpy(probs)
+    entropy = -torch.sum(tensor_probs * torch.log(tensor_probs + epsilon), dim=-1)
     return entropy.mean().item()
 
 def get_ngram_probs(model, context):
     with torch.no_grad():
-        logits, _ = model(context)
-        logits = logits[:, -1, :]  # Get logits for the last token in the sequence
-        print("logits")
-        print(context)
+        context_tensor = torch.tensor(context, dtype=torch.long, device=device).unsqueeze(0)
+        logits, _ = model(context_tensor, context_tensor)
+        logits = logits[:, -1, :]  # Get logits for the last token in the context
         probs = torch.nn.functional.softmax(logits, dim=-1)
-    return probs
+    return probs.cpu().numpy()
 
+def generate_ngrams(data, n):
+    ngrams = []
+    for i in range(len(data) - n + 1):
+        ngrams.append(data[i:i + n])
+    return ngrams
+
+X, Y = get_batch('train')
+# print("----------------------------------------------------------------------------------")
+# print(X.size())
+ngrams = generate_ngrams(list(X[0].cpu().numpy()), n)
 ngram_data = []
 
-while True:
-    lr = get_lr(iter_num)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-    if iter_num % eval_interval == 0 and not iter_num == 0:
+while iter_num < max_iters:
+    if iter_num % eval_interval == 0 and iter_num > 0:
         losses = estimate_loss()
-        entropy = compute_shannon_entropy(logits)
+
         if master_process:
-            print(f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, entropy {entropy:.4f}")
+            print(
+                f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, entropy {entropy:.4f}")
         if wandb_log and master_process:
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
-                "entropy": entropy,
-                "lr": lr,
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
@@ -247,33 +254,32 @@ while True:
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
 
     for micro_step in range(gradient_accumulation_steps):
-        X, Y = get_batch('train')
         with ctx:
             logits, loss = model(X, Y)
-            ngram_context = X[:, -n+1:]  # Get the last n-1 tokens as context
-            probs = get_ngram_probs(model, ngram_context)
-            entropy = compute_shannon_entropy(probs)
-            loss = loss / gradient_accumulation_steps
+            loss /= gradient_accumulation_steps
+
+            for ngrams_context in ngrams:
+                ngram_prob = get_ngram_probs(model, ngrams_context)
+                entropy = compute_shannon_entropy(ngram_prob)
+                #print(probs)
+                #print(ngrams_context)
+                #print(entropy)
 
             # Store N-gram data
-            print(probs.size())
-            predicted_word = probs.argmax(dim=-1).item()
+            predicted_word = ngram_prob.argmax().item()
             ngram_data.append({
-                'context': ngram_context.cpu().numpy().tolist(),
                 'predicted_word': predicted_word,
-                'probability_distribution': probs.cpu().numpy().tolist(),
+                'probability_distribution': ngram_prob.tolist(),
                 'entropy': entropy
             })
-
         scaler.scale(loss).backward()
-
+    print(ngram_data)
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad(set_to_none=True)
-
     iter_num += 1
 
     if iter_num % log_interval == 0:
@@ -285,7 +291,6 @@ while True:
                 "iter": iter_num,
                 "train/loss": lossf,
                 "entropy": entropy,
-                "lr": lr,
             })
 
     if iter_num > max_iters:
