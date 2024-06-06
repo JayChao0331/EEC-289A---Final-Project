@@ -4,17 +4,13 @@ import math
 import pickle
 from contextlib import nullcontext
 from collections import defaultdict
-
 import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
-
 from model import GPTConfig, GPT
 import torch._dynamo
-
 torch._dynamo.config.suppress_errors = True
-
 # -----------------------------------------------------------------------------
 # default config values
 # I/O
@@ -64,7 +60,6 @@ config_keys = [k for k, v in globals().items() if not k.startswith('_') and isin
 exec(open('configurator.py').read())
 config = {k: globals()[k] for k in config_keys}
 # -----------------------------------------------------------------------------
-
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get('RANK', -1)) != -1
 if ddp:
@@ -93,7 +88,6 @@ torch.backends.cudnn.allow_tf32 = True
 device_type = 'cuda' if 'cuda' in device else 'cpu'
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
-
 data_dir = os.path.join('data', dataset)
 
 def get_batch(split):
@@ -109,7 +103,6 @@ def get_batch(split):
     else:
         x, y = x.to(device), y.to(device)
     return x, y
-
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
@@ -172,7 +165,6 @@ if ddp:
 
 if wandb_log and master_process:
     import wandb
-
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 def get_lr(iter_num):
@@ -199,34 +191,42 @@ def estimate_loss():
     model.train()
     return out
 
-def compute_shannon_entropy(probs):
-    epsilon = 1e-9
-    #print(sum(probs[0]))
-    probs = probs / sum(probs[0])
-    tensor_probs = torch.from_numpy(probs)
-    entropy = -torch.sum(tensor_probs * torch.log(tensor_probs + epsilon), dim=-1)
-    return entropy.mean().item()
-
-def get_ngram_probs(model, context):
-    with torch.no_grad():
-        context_tensor = torch.tensor(context, dtype=torch.long, device=device).unsqueeze(0)
-        logits, _ = model(context_tensor, context_tensor)
-        logits = logits[:, -1, :]  # Get logits for the last token in the context
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-    return probs.cpu().numpy()
-
 def generate_ngrams(data, n):
     ngrams = []
     for i in range(len(data) - n + 1):
         ngrams.append(data[i:i + n])
     return ngrams
 
-X, Y = get_batch('train')
-# print("----------------------------------------------------------------------------------")
-# print(X.size())
-ngrams = generate_ngrams(list(X[0].cpu().numpy()), n)
-ngram_data = []
+def get_ngram_probs(model, context):
+    with torch.no_grad():
+        context_tensor = torch.tensor(context, dtype=torch.long, device=device).unsqueeze(0)
+        logits, _ = model(context_tensor, context_tensor)
+        logits = logits[:, -1, :]  # Get logits for the last token in the context
+        probs = torch.nn.functional.softmax(logits, dim=-1).squeeze()
+        total_probs = probs.sum()
+        probs = probs / total_probs
+    return probs
 
+def compute_shannon_entropy(probs):
+    epsilon = 1e-9
+    entropy = -torch.sum(probs * torch.log(probs + epsilon), dim=-1)
+    return entropy.mean().item()
+
+ngram_data = []
+n_gram_list_row = []
+
+X, Y = get_batch('train')
+#for X:
+#tensor([[20,  1, 24,  ..., 19,  6, 20],
+        # [22, 19,  5,  ...,  6, 19,  0],
+        # [16, 19,  1,  ..., 26, 16, 22],
+        # ...,
+        # [ 1,  7, 22,  ...,  6,  1, 17],
+        # [20,  6, 19,  ..., 13,  2, 22],
+        # [26,  1, 21,  ..., 19,  1, 14]], device='cuda:0')
+for X_row in X:
+    n_gram_list_row.append(generate_ngrams(X_row, n))
+#print(n_gram_list_row)
 while iter_num < max_iters:
     if iter_num % eval_interval == 0 and iter_num > 0:
         losses = estimate_loss()
@@ -255,25 +255,32 @@ while iter_num < max_iters:
 
     for micro_step in range(gradient_accumulation_steps):
         with ctx:
-            logits, loss = model(X, Y)
+            _, loss = model(X, Y) # logits unused, for: _
             loss /= gradient_accumulation_steps
 
-            for ngrams_context in ngrams:
-                ngram_prob = get_ngram_probs(model, ngrams_context)
-                entropy = compute_shannon_entropy(ngram_prob)
-                #print(probs)
-                #print(ngrams_context)
-                #print(entropy)
+            for ngrams_row_instance in n_gram_list_row:
+                # ngrams_row_instance:
+                # [..., tensor([ 6, 20, 10], device='cuda:0'), tensor([20, 10, 19], device='cuda:0'),
+                # tensor([10, 19,  6], device='cuda:0'),
+                # tensor([19,  6, 20], device='cuda:0'),...]
+                for ngram_element in ngrams_row_instance:
+                    ngram_prob = get_ngram_probs(model, ngram_element) #ngram_prob: prob values for all 28 chars
+                    entropy = compute_shannon_entropy(ngram_prob)
+                    #print("ngram_prob")
+                    #print(ngram_prob)
+                    #print(ngrams_context)
+                    #print(entropy)
 
-            # Store N-gram data
-            predicted_word = ngram_prob.argmax().item()
-            ngram_data.append({
-                'predicted_word': predicted_word,
-                'probability_distribution': ngram_prob.tolist(),
-                'entropy': entropy
-            })
+                    # Store N-gram data
+                    predicted_word = ngram_prob.argmax().item()
+                    # print(predicted_word)
+                    ngram_data.append({
+                        'predicted_word': predicted_word,
+                        'probability_distribution': ngram_prob.tolist(),
+                        'entropy': entropy
+                    })
         scaler.scale(loss).backward()
-    print(ngram_data)
+    #print(ngram_data)
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
