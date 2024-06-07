@@ -48,6 +48,16 @@ def validate_text(all_works_sentences):
 
 def train_test_split(corpus):
     corpus_len = len(corpus)
-    train_set = corpus[:corpus_len-1]
-    test_set = corpus[corpus_len-1:]
+    train_set_tmp = corpus[:corpus_len-1]
+    train_set = []
+    for work_lst in train_set_tmp:
+        for paragraph in work_lst:
+            train_set.append(paragraph)
+
+    test_set_tmp = corpus[corpus_len-1:]
+    test_set = []
+    for work_lst in test_set_tmp:
+        for paragraph in work_lst:
+            test_set.append(paragraph)
+
     return train_set, test_set
