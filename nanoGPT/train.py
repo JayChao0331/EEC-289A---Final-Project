@@ -1,9 +1,7 @@
 import os
-import time
 import math
 import pickle
 from contextlib import nullcontext
-from collections import defaultdict
 import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -92,12 +90,12 @@ data_dir = os.path.join('data', dataset)
 
 def get_batch(split):
     if split == 'train':
-        data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+        data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r') #replace with github code
     else:
-        data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+        data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r') #replace with test
     ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([torch.from_numpy((data[i:i + block_size]).astype(np.int64)) for i in ix])
-    y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64)) for i in ix])
+    x = torch.stack([torch.from_numpy((data[i:i + block_size]).astype(np.int64)) for i in ix]) #replace with github code
+    y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64)) for i in ix]) # ...
     if device_type == 'cuda':
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
@@ -177,19 +175,11 @@ def get_lr(iter_num):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (learning_rate - min_lr)
 
-def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            with ctx:
-                logits, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
+def collect_n_grams(X):
+    n_gram_list_row = []
+    for X_row in X:
+        n_gram_list_row.append(generate_ngrams(X_row, n))
+    return n_gram_list_row
 
 def generate_ngrams(data, n):
     ngrams = []
@@ -213,7 +203,40 @@ def compute_shannon_entropy(probs):
     return entropy.mean().item()
 
 ngram_data = []
-n_gram_list_row = []
+def estimate_loss():
+    out = {}
+    model.eval()
+    for split in ['train', 'val']: # change val to test
+        losses = torch.zeros(eval_iters)
+
+        X, Y = get_batch(split)
+        n_gram_list_row = collect_n_grams(X)
+        with ctx:
+            logits, loss = model(X, Y)
+
+        for ngrams_row_instance in n_gram_list_row:
+            # ngrams_row_instance:
+            # [..., tensor([ 6, 20, 10], device='cuda:0'), tensor([20, 10, 19], device='cuda:0'),
+            # tensor([10, 19,  6], device='cuda:0'),
+            # tensor([19,  6, 20], device='cuda:0'),...]
+            for ngram_element in ngrams_row_instance:
+                ngram_prob = get_ngram_probs(model, ngram_element)  # ngram_prob: prob values for all 28 chars
+                entropy = compute_shannon_entropy(ngram_prob)
+                predicted_word = ngram_prob.argmax().item()
+                print(predicted_word)
+                ngram_data.append({
+                    'predicted_word': predicted_word,
+                    'probability_distribution': ngram_prob.tolist(),
+                    'entropy': entropy
+                })
+            for entry in ngram_data:
+                print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
+                print(f"Probability Distribution: {entry['probability_distribution']}\n")
+        for k in range(eval_iters):
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
 
 X, Y = get_batch('train')
 #for X:
@@ -224,16 +247,14 @@ X, Y = get_batch('train')
         # [ 1,  7, 22,  ...,  6,  1, 17],
         # [20,  6, 19,  ..., 13,  2, 22],
         # [26,  1, 21,  ..., 19,  1, 14]], device='cuda:0')
-for X_row in X:
-    n_gram_list_row.append(generate_ngrams(X_row, n))
-#print(n_gram_list_row)
+
 while iter_num < max_iters:
     if iter_num % eval_interval == 0 and iter_num > 0:
         losses = estimate_loss()
 
         if master_process:
             print(
-                f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, entropy {entropy:.4f}")
+                f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         if wandb_log and master_process:
             wandb.log({
                 "iter": iter_num,
@@ -257,33 +278,12 @@ while iter_num < max_iters:
         with ctx:
             _, loss = model(X, Y) # logits unused, for: _
             loss /= gradient_accumulation_steps
-
-            for ngrams_row_instance in n_gram_list_row:
-                # ngrams_row_instance:
-                # [..., tensor([ 6, 20, 10], device='cuda:0'), tensor([20, 10, 19], device='cuda:0'),
-                # tensor([10, 19,  6], device='cuda:0'),
-                # tensor([19,  6, 20], device='cuda:0'),...]
-                for ngram_element in ngrams_row_instance:
-                    ngram_prob = get_ngram_probs(model, ngram_element) #ngram_prob: prob values for all 28 chars
-                    entropy = compute_shannon_entropy(ngram_prob)
-                    #print("ngram_prob")
-                    #print(ngram_prob)
-                    #print(ngrams_context)
-                    #print(entropy)
-
-                    # Store N-gram data
-                    predicted_word = ngram_prob.argmax().item()
-                    # print(predicted_word)
-                    ngram_data.append({
-                        'predicted_word': predicted_word,
-                        'probability_distribution': ngram_prob.tolist(),
-                        'entropy': entropy
-                    })
         scaler.scale(loss).backward()
-    #print(ngram_data)
+
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad(set_to_none=True)
@@ -292,22 +292,11 @@ while iter_num < max_iters:
     if iter_num % log_interval == 0:
         lossf = loss.item() * gradient_accumulation_steps
         if master_process:
-            print(f"iter {iter_num}: loss {lossf:.4f}, entropy {entropy:.4f}")
+            print(f"iter {iter_num}: loss {lossf:.4f}")
         if wandb_log and master_process:
             wandb.log({
                 "iter": iter_num,
-                "train/loss": lossf,
-                "entropy": entropy,
+                "train/loss": lossf
             })
-
-    if iter_num > max_iters:
-        break
-
 if ddp:
     destroy_process_group()
-
-# Print out the N-gram data collected
-for entry in ngram_data:
-    context_str = ' '.join(map(str, entry['context'][0]))
-    print(f"Context: {context_str}, Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
-    print(f"Probability Distribution: {entry['probability_distribution']}\n")
