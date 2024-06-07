@@ -2,6 +2,16 @@ from nltk.corpus import shakespeare
 from read_shakespeare import extract_sentences_from_work, clean_text, validate_text, train_test_split
 
 
+def extract_unique_n_minus_1_grams(corpus, n):
+    n_minus_1_grams = set()
+    for sentence in corpus:
+        sentence = ''.join(sentence)
+        for i in range(len(sentence) - n + 2):
+            context = sentence[i:i + n - 1]
+            n_minus_1_grams.add(context)
+    return n_minus_1_grams
+
+
 
 if __name__ == '__main__':
     works = shakespeare.fileids()
@@ -17,4 +27,6 @@ if __name__ == '__main__':
     else:
         print('Dictionary size is wrong!')
 
+    N=3
     train_set, test_set = train_test_split(all_works_sentences)
+    test_n_minus_1_grams = extract_unique_n_minus_1_grams(test_set, n=N)
