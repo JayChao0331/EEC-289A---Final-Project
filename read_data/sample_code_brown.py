@@ -15,6 +15,7 @@ def extract_unique_n_minus_1_grams(corpus, n):
 
 if __name__ == '__main__':
     # Read Data
+    N=3
     corpus = brown.sents()
     corpus_processed = preprocess_corpus(corpus)
     corpus_tokenized = tokenizer(corpus_processed)
