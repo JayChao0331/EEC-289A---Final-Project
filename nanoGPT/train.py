@@ -303,12 +303,12 @@ while iter_num < max_iters:
             losses = estimate_test_loss()
             if master_process:
                 print(
-                    f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['test']:.4f}")
+                    f"iter {iter_num}: train loss {losses['train']:.4f}, test loss {losses['test']:.4f}")
             if wandb_log and master_process:
                 wandb.log({
                     "iter": iter_num,
                     "train/loss": losses['train'],
-                    "val/loss": losses['test'],
+                    "test/loss": losses['test'],
                 })
             if losses['test'] < best_test_loss or always_save_checkpoint:
                 best_test_loss = losses['test']
