@@ -12,6 +12,8 @@ torch._dynamo.config.suppress_errors = True
 # -----------------------------------------------------------------------------
 # default config values
 # I/O
+# disable validation set and use test set for our project
+validation_flag = True
 out_dir = 'out'
 eval_interval = 2000
 log_interval = 1
@@ -108,6 +110,7 @@ def get_batch(split):
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
+best_test_loss = 1e9
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, dropout=dropout, bias=bias,
@@ -144,7 +147,11 @@ elif init_from == 'resume':
     state_dict = checkpoint['model']
     model.load_state_dict(state_dict)
     iter_num = checkpoint['iter_num']
-    best_val_loss = checkpoint['best_val_loss']
+
+    if validation_flag:
+        best_val_loss = checkpoint['best_val_loss']
+    else:
+        best_test_loss = checkpoint['best_test_loss']
 
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
@@ -205,32 +212,48 @@ def compute_shannon_entropy(probs):
     entropy = -torch.sum(probs * torch.log(probs + epsilon), dim=-1)
     return entropy.mean().item()
 
-ngram_data = []
-def estimate_loss():
+def estimate_validation_loss():
     out = {}
     model.eval()
-    for split in ['train', 'val']: # change val to test
+    for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
 
         X, Y = get_batch(split)
-        n_gram_list_row = collect_n_grams(X)
         with ctx:
             logits, loss = model(X, Y)
 
-        for ngrams_row_instance in n_gram_list_row:
-            # ngrams_row_instance:
-            # [..., tensor([ 6, 20, 10], device='cuda:0'), tensor([20, 10, 19], device='cuda:0'),
-            # tensor([10, 19,  6], device='cuda:0'),
-            # tensor([19,  6, 20], device='cuda:0'),...]
-            for ngram_element in ngrams_row_instance:
-                ngram_prob = get_ngram_probs(model, ngram_element)  # ngram_prob: prob values for all 28 chars
-                entropy = compute_shannon_entropy(ngram_prob)
-                predicted_word = ngram_prob.argmax().item()
-                print(predicted_word)
-                ngram_data.append({
-                    'predicted_word': predicted_word,
-                    'probability_distribution': ngram_prob.tolist(),
-                    'entropy': entropy
+        for k in range(eval_iters):
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
+
+ngram_data = []
+def estimate_test_loss():
+    out = {}
+    model.eval()
+    for split in ['train', 'test']:
+        losses = torch.zeros(eval_iters)
+
+        X, Y = get_batch(split)
+        with ctx:
+            logits, loss = model(X, Y)
+        if split == 'test':
+            n_gram_list_row = collect_n_grams(X)
+            for ngrams_row_instance in n_gram_list_row:
+                # ngrams_row_instance:
+                # [..., tensor([ 6, 20, 10], device='cuda:0'), tensor([20, 10, 19], device='cuda:0'),
+                # tensor([10, 19,  6], device='cuda:0'),
+                # tensor([19,  6, 20], device='cuda:0'),...]
+                for ngram_element in ngrams_row_instance:
+                    ngram_prob = get_ngram_probs(model, ngram_element)  # ngram_prob: prob values for all 28 chars
+                    entropy = compute_shannon_entropy(ngram_prob)
+                    predicted_word = ngram_prob.argmax().item()
+                    #print(predicted_word)
+                    ngram_data.append({
+                        'predicted_word': predicted_word,
+                        'probability_distribution': ngram_prob.tolist(),
+                        'entropy': entropy
                 })
             for entry in ngram_data:
                 print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
@@ -253,33 +276,56 @@ X, Y = get_batch('train')
 
 while iter_num < max_iters:
     if iter_num % eval_interval == 0 and iter_num > 0:
-        losses = estimate_loss()
-
-        if master_process:
-            print(
-                f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-        if wandb_log and master_process:
-            wandb.log({
-                "iter": iter_num,
-                "train/loss": losses['train'],
-                "val/loss": losses['val'],
-            })
-        if losses['val'] < best_val_loss or always_save_checkpoint:
-            best_val_loss = losses['val']
+        if validation_flag:
+            losses = estimate_validation_loss()
             if master_process:
-                print(f"saving checkpoint to {out_dir}")
-                checkpoint = {
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'model_args': model_args,
-                    'iter_num': iter_num,
-                    'best_val_loss': best_val_loss,
-                }
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                print(
+                    f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+            if wandb_log and master_process:
+                wandb.log({
+                    "iter": iter_num,
+                    "train/loss": losses['train'],
+                    "val/loss": losses['val'],
+                })
+            if losses['val'] < best_val_loss or always_save_checkpoint:
+                best_val_loss = losses['val']
+                if master_process:
+                    print(f"saving checkpoint to {out_dir}")
+                    checkpoint = {
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'model_args': model_args,
+                        'iter_num': iter_num,
+                        'best_val_loss': best_val_loss,
+                    }
+                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+        else:
+            losses = estimate_test_loss()
+            if master_process:
+                print(
+                    f"iter {iter_num}: train loss {losses['train']:.4f}, val loss {losses['test']:.4f}")
+            if wandb_log and master_process:
+                wandb.log({
+                    "iter": iter_num,
+                    "train/loss": losses['train'],
+                    "val/loss": losses['test'],
+                })
+            if losses['test'] < best_test_loss or always_save_checkpoint:
+                best_test_loss = losses['test']
+                if master_process:
+                    print(f"saving checkpoint to {out_dir}")
+                    checkpoint = {
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'model_args': model_args,
+                        'iter_num': iter_num,
+                        'best_test_loss': best_test_loss,
+                    }
+                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
 
     for micro_step in range(gradient_accumulation_steps):
         with ctx:
-            _, loss = model(X, Y) # logits unused, for: _
+            _, loss = model(X, Y) # logits unused
             loss /= gradient_accumulation_steps
         scaler.scale(loss).backward()
 

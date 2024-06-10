@@ -21,6 +21,8 @@ n_head = 6
 n_embd = 384
 dropout = 0.2
 
+validation_flag = False
+
 wind = 0
 n_register_token = 0
 use_LLaMA_flag = False
