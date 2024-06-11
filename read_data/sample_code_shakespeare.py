@@ -12,7 +12,7 @@ def extract_unique_n_minus_1_grams(corpus, n):
             n_minus_1_grams.add(context)
     return n_minus_1_grams
 
-def get_train_test_n_grams_data(N):
+def get_train_test_data():
     works = shakespeare.fileids()
 
     all_works_sentences = []
@@ -22,13 +22,12 @@ def get_train_test_n_grams_data(N):
         all_works_sentences.append(cleaned_sentences)
 
     if validate_text(all_works_sentences):
-        print(f'Dictionary size is correct! Using N gram size: {N}')
+        print(f'Dictionary size is correct!')
     else:
-        print(f'Dictionary size is wrong! Using N gram size: {N}')
+        print(f'Dictionary size is wrong!')
     train_set, test_set = train_test_split(all_works_sentences)
-    test_n_minus_1_grams = extract_unique_n_minus_1_grams(test_set, n=N)
 
-    return all_works_sentences, train_set, test_set, test_n_minus_1_grams
+    return all_works_sentences, train_set, test_set
 
 #if __name__ == '__main__':
 

@@ -5,19 +5,21 @@ import numpy as np
 import sys
 sys.path.insert(1, 'C:/Users/lenovoi7/Documents/GitHub/EEC289AFinalProject/read_data')
 
-from sample_code_shakespeare import get_train_test_n_grams_data
+from sample_code_shakespeare import get_train_test_data, extract_unique_n_minus_1_grams
 
-N = 3
-all_works_sentences, train_set, test_set, test_n_minus_1_grams = get_train_test_n_grams_data(N)
+
+all_works_sentences, train_set, test_set = get_train_test_data()
 
 def flatten(list_in):
     return [x for xs in list_in for x in xs]
 
 chars = 'abcdefghijklmnopqrstuvwxyz '
 vocab_size = len(chars)
-print("all the unique characters:", ''.join(set(chars)))
+all_works_sentences_size = len(all_works_sentences)
+
+print("all the unique characters:", chars)
 print(f"vocab size: {vocab_size:,}")
-print(f"All n grams sequences: {test_n_minus_1_grams}")
+print(f"size of sentences: {all_works_sentences_size}")
 
 # create a mapping from characters to integers
 stoi = { ch:i for i,ch in enumerate(chars) }
@@ -35,6 +37,22 @@ train_set_flat = ''.join(train_set_2)
 test_set_1 = flatten(test_set)
 test_set_2 = flatten(test_set_1)
 test_set_flat = ''.join(test_set_2)
+
+N = [2, 3]
+n_gram_list = []
+for n_gram in N:
+    test_n_minus_1_grams = extract_unique_n_minus_1_grams(test_set, n=n_gram)
+    test_n_minus_1_grams_list = list(test_n_minus_1_grams)
+
+    n_gram_ids = []
+    for n_gram_string in test_n_minus_1_grams_list:
+        n_gram_ids.append(encode(n_gram_string))
+    print(f"test_n_minus_1_grams for n-gram size of {n_gram} has {len(n_gram_ids):,} tokens")
+    n_gram_list.append(n_gram_ids)
+os_path = os.path.dirname(__file__)
+path = os.path.join(os_path, 'n_gram_list.pkl')
+with open(path, 'wb') as f:
+    pickle.dump(n_gram_list, f)
 
 train_ids = encode(train_set_flat)
 test_ids = encode(test_set_flat)

@@ -4,6 +4,7 @@ import pickle
 from contextlib import nullcontext
 import numpy as np
 import torch
+import json
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 from model import GPTConfig, GPT
@@ -55,6 +56,8 @@ backend = 'nccl'
 device = 'cuda'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
 compile = True
+pkl_file_path = ''
+
 # -----------------------------------------------------------------------------
 config_keys = [k for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read())
@@ -99,8 +102,8 @@ def get_batch(split):
         data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
 
     ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([torch.from_numpy((data[i:i + block_size]).astype(np.int64)) for i in ix]) #replace with github code
-    y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64)) for i in ix]) # ...
+    x = torch.stack([torch.from_numpy((data[i:i + block_size]).astype(np.int64)) for i in ix])
+    y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
@@ -185,17 +188,10 @@ def get_lr(iter_num):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (learning_rate - min_lr)
 
-def collect_n_grams(X):
-    n_gram_list_row = []
-    for X_row in X:
-        n_gram_list_row.append(generate_ngrams(X_row, n))
-    return n_gram_list_row
-
-def generate_ngrams(data, n):
-    ngrams = []
-    for i in range(len(data) - n + 1):
-        ngrams.append(data[i:i + n])
-    return ngrams
+def collect_n_grams_from_pkl():
+    with open(pkl_file_path, 'rb') as f:
+        n_list = pickle.load(f)
+        return n_list
 
 def get_ngram_probs(model, context):
     with torch.no_grad():
@@ -228,7 +224,30 @@ def estimate_validation_loss():
     model.train()
     return out
 
-ngram_data = []
+def find_entropy_prob_context_word_predict(model):
+    ngram_data = []
+    n_gram_list_row = collect_n_grams_from_pkl()
+
+    for ngrams_of_size in n_gram_list_row:
+        for ngram_element in ngrams_of_size:
+            ngram_prob = get_ngram_probs(model, ngram_element)
+            entropy = compute_shannon_entropy(ngram_prob)
+            predicted_word = ngram_prob.argmax().item()
+            ngram_data.append({
+                'predicted_word': predicted_word,
+                'probability_distribution': ngram_prob.tolist(),
+                'entropy': entropy,
+                'ngram_context': ngram_element
+            })
+
+    for entry in ngram_data:
+        print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
+        print(f"Probability Distribution: {entry['probability_distribution']}")
+        print(f"N-gram Context: {entry['ngram_context']}\n")
+
+    with open('entropy_data.json', 'w') as fp:
+        json.dump(ngram_data, fp)
+
 def estimate_test_loss():
     out = {}
     model.eval()
@@ -238,35 +257,16 @@ def estimate_test_loss():
         X, Y = get_batch(split)
         with ctx:
             logits, loss = model(X, Y)
-        if split == 'test':
-            n_gram_list_row = collect_n_grams(X)
-            for ngrams_row_instance in n_gram_list_row:
-                # ngrams_row_instance:
-                # [..., tensor([ 6, 20, 10], device='cuda:0'), tensor([20, 10, 19], device='cuda:0'),
-                # tensor([10, 19,  6], device='cuda:0'),
-                # tensor([19,  6, 20], device='cuda:0'),...]
-                for ngram_element in ngrams_row_instance:
-                    ngram_prob = get_ngram_probs(model, ngram_element)  # ngram_prob: prob values for all 28 chars
-                    entropy = compute_shannon_entropy(ngram_prob)
-                    predicted_word = ngram_prob.argmax().item()
-                    #print(predicted_word)
-                    ngram_data.append({
-                        'predicted_word': predicted_word,
-                        'probability_distribution': ngram_prob.tolist(),
-                        'entropy': entropy
-                })
-            for entry in ngram_data:
-                print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
-                print(f"Probability Distribution: {entry['probability_distribution']}\n")
+
         for k in range(eval_iters):
             losses[k] = loss.item()
         out[split] = losses.mean()
+
     model.train()
     return out
 
 X, Y = get_batch('train')
-#for X:
-#tensor([[20,  1, 24,  ..., 19,  6, 20],
+#for X: tensor([[20,  1, 24,  ..., 19,  6, 20],
         # [22, 19,  5,  ...,  6, 19,  0],
         # [16, 19,  1,  ..., 26, 16, 22],
         # ...,
@@ -347,5 +347,7 @@ while iter_num < max_iters:
                 "iter": iter_num,
                 "train/loss": lossf
             })
+
+find_entropy_prob_context_word_predict(model)
 if ddp:
     destroy_process_group()

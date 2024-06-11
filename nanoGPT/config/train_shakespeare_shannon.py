@@ -10,6 +10,7 @@ wandb_log = False # override via command line if you like
 wandb_project = 'shakespeare-shannon'
 wandb_run_name = 'mini-gpt'
 
+pkl_file_path = './data/shakespeare_shannon/n_gram_list.pkl'
 dataset = 'shakespeare_shannon'
 gradient_accumulation_steps = 1
 batch_size = 64
