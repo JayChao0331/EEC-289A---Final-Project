@@ -1,4 +1,7 @@
-from transformers import PreTrainedTokenizerFast, TFOpenAIGPTLMHeadModel
+from transformers import PreTrainedTokenizer, TFOpenAIGPTLMHeadModel
+from transformers import OpenAIGPTLMHeadModel, DataCollatorForLanguageModeling, Trainer, TrainingArguments
+from transformers import OpenAIGPTConfig
+import torch
 import tensorflow as tf
 from nltk.corpus import brown
 import re
@@ -6,24 +9,27 @@ import nltk
 from collections import Counter
 from datasets import Dataset
 
+
 nltk.download('brown')
 
 
-class CustomTokenizer():
+class CustomTokenizer(PreTrainedTokenizer):
     def __init__(self, vocab):
-        super().__init__()
         self.vocab = vocab
+        super().__init__(vocab=vocab, pad_token="<pad>", unk_token="<unk>")
+
         self.ids_to_tokens = {v: k for k, v in vocab.items()}
         self.pad_token = "<pad>"
+        self.unk_token = "<unk>"
         self.pad_token_id = vocab[self.pad_token]
 
     def _tokenize(self, text):
         return list(text)
 
-    def _convert_token_to_id(self, token):
+    def convert_token_to_id(self, token):
         return self.vocab.get(token, self.vocab.get("<unk>"))
 
-    def _convert_id_to_token(self, index):
+    def convert_ids_to_tokens(self, index):
         return self.ids_to_tokens.get(index, "<unk>")
 
     def get_vocab(self):
@@ -31,16 +37,18 @@ class CustomTokenizer():
 
     def encode(self, text, max_length=None, padding=False, truncation=False):
         tokens = self._tokenize(text)
-        token_ids = [self._convert_token_to_id(token) for token in tokens]
+        token_ids = [self.convert_token_to_id(token) for token in tokens]
         if truncation and max_length:
             token_ids = token_ids[:max_length]
         if padding and max_length:
-            token_ids += [self._convert_token_to_id(self.pad_token)] * (max_length - len(token_ids))
+            token_ids += [self.convert_token_to_id(self.pad_token)] * (max_length - len(token_ids))
+        #attention_mask = [1] * len(token_ids)  # Add attention mask
         return token_ids
 
     def decode(self, token_ids):
-        tokens = [self._convert_id_to_token(token_id) for token_id in token_ids]
+        tokens = [self.convert_ids_to_tokens(token_id) for token_id in token_ids]
         return ''.join(tokens)
+
 
 
 print("Preprocessing corpus")
@@ -97,17 +105,52 @@ model = TFOpenAIGPTLMHeadModel.from_pretrained("openai-community/openai-gpt")
 print("Model Loaded")
 
 
-from transformers import OpenAIGPTConfig, TFOpenAIGPTLMHeadModel, AutoTokenizer
 
 #configuration = OpenAIGPTConfig()
 
 #model = TFOpenAIGPTLMHeadModel(configuration)
 
-import tensorflow as tf
+#tokenizer = AutoTokenizer.from_pretrained("openai-community/openai-gpt")
+#model = TFOpenAIGPTLMHeadModel.from_pretrained("openai-community/openai-gpt")
 
-tokenizer = AutoTokenizer.from_pretrained("openai-community/openai-gpt")
-model = TFOpenAIGPTLMHeadModel.from_pretrained("openai-community/openai-gpt")
+iconfig = OpenAIGPTConfig()
+model = OpenAIGPTLMHeadModel(config)
+model.resize_token_embeddings(len(vocab))
 
-inputs = tokenizer("Hello, my name is... ", return_tensors="tf")
-outputs = model(inputs)
-logits = outputs.logits
+tokenizer = CustomTokenizer(vocab)
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+print("Model Loaded")
+
+
+
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,  # Custom tokenizer does not need to be passed here
+    mlm=False, 
+)
+
+
+
+training_args = TrainingArguments(
+    output_dir="./results",
+    overwrite_output_dir=True,
+    num_train_epochs=1,
+    per_device_train_batch_size=4,
+    per_device_eval_batch_size=4,
+    save_steps=10_000,
+    save_total_limit=2,
+    prediction_loss_only=True,
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    data_collator=data_collator,
+    train_dataset=tokenized_datasets['train'],
+    eval_dataset=tokenized_datasets['validation'],
+)
+
+trainer.train()
+
