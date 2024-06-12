@@ -27,3 +27,11 @@ def get_train_test_data():
     train_set, test_set = train_test_split(all_works_sentences)
 
     return all_works_sentences, train_set, test_set
+
+if __name__ == '__main__':
+    dataset = 'shakespeare'
+    init_from = ['scratch', 'gpt2']
+
+    for init_mode in init_from:
+        with open(f'entropy_data_{dataset}_{init_from}.json', 'w') as fp:
+            json.load(ngram_data, fp)

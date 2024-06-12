@@ -312,20 +312,21 @@ def compute_shannon_entropy(probs):
     return entropy.mean().item()
 
 def find_entropy_prob_context_word_predict(model):
-    ngram_data = []
     n_gram_list_row = collect_n_grams_from_pkl()
-
+    ngram_data = [[] for i in range(len(n_gram_list_row))]
+    index = 0
     for ngrams_of_size in n_gram_list_row:
+        index = index + 1
         for ngram_element in ngrams_of_size:
             ngram_prob = get_ngram_probs(model, ngram_element)
             entropy = compute_shannon_entropy(ngram_prob)
             predicted_word = ngram_prob.argmax().item()
-            ngram_data.append({
+            ngram_data[index].append(list({
                 'predicted_word': predicted_word,
                 'probability_distribution': ngram_prob.tolist(),
                 'entropy': entropy,
                 'ngram_context': ngram_element
-            })
+            }))
 
     # for entry in ngram_data:
     #     print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
