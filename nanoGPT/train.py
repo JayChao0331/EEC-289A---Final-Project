@@ -181,13 +181,14 @@ if init_from == 'scratch':
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    ckpt_path = os.path.join(out_dir, f'ckpt_{dataset}_{init_from}.pt')
     checkpoint = torch.load(ckpt_path, map_location=device)
     checkpoint_model_args = checkpoint['model_args']
     # force these config attributes to be equal otherwise we can't even resume training
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = checkpoint_model_args[k]
+
     # create the model
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
@@ -209,11 +210,16 @@ elif init_from == 'resume':
 elif init_from.startswith('gpt2'):
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
     # initialize from OpenAI GPT-2 weights
-    override_args = dict(dropout=dropout)
+    override_args = dict(dropout=dropout, vocab_size=meta_vocab_size)
     model = GPT.from_pretrained(init_from, override_args)
     # read off the created config params, so we can store them into checkpoint correctly
     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = getattr(model.config, k)
+        if k == 'vocab_size':
+            model_args[k] = meta_vocab_size
+        else:
+            model_args[k] = getattr(model.config, k)
+    print('====================================================')
+    print(model_args)
 # crop down the model block size if desired, using model surgery
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
@@ -321,13 +327,13 @@ def find_entropy_prob_context_word_predict(model):
                 'ngram_context': ngram_element
             })
 
-        for entry in ngram_data:
-            print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
-            print(f"Probability Distribution: {entry['probability_distribution']}")
-            print(f"N-gram Context: {entry['ngram_context']}\n")
+    for entry in ngram_data:
+        print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
+        print(f"Probability Distribution: {entry['probability_distribution']}")
+        print(f"N-gram Context: {entry['ngram_context']}\n")
 
-        with open('entropy_data.json', 'w') as fp:
-            json.dump(ngram_data, fp)
+    with open(f'entropy_data_{dataset}_{init_from}.json', 'w') as fp:
+        json.dump(ngram_data, fp)
 
 # logging
 if wandb_log and master_process:
@@ -340,8 +346,8 @@ t0 = time.time()
 local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 running_mfu = -1.0
-while True:
 
+while True:
     # determine and set the learning rate for this iteration
     lr = get_lr(iter_num) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
@@ -372,7 +378,7 @@ while True:
                         'config': config,
                     }
                     print(f"saving checkpoint to {out_dir}")
-                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                    torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{dataset}_{init_from}.pt'))
         else:
             losses = estimate_test_loss()
             print(f"step {iter_num}: train loss {losses['train']:.4f}, test loss {losses['test']:.4f}")
@@ -396,7 +402,7 @@ while True:
                         'config': config,
                     }
                     print(f"saving checkpoint to {out_dir}")
-                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                    torch.save(checkpoint, os.path.join(out_dir, f'ckpt_{dataset}_{init_from}.pt'))
 
     if iter_num == 0 and eval_only:
         break
@@ -413,10 +419,12 @@ while True:
         with ctx:
             logits, loss = model(X, Y)
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
+
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
+
     # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
@@ -431,10 +439,12 @@ while True:
     t1 = time.time()
     dt = t1 - t0
     t0 = t1
+
     if iter_num % log_interval == 0 and master_process:
         # get loss as float. note: this is a CPU-GPU sync point
         # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
         lossf = loss.item() * gradient_accumulation_steps
+
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
@@ -445,6 +455,7 @@ while True:
     # termination conditions
     if iter_num > max_iters:
         break
+
 find_entropy_prob_context_word_predict(model)
 if ddp:
     destroy_process_group()
