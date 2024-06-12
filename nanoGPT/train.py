@@ -327,10 +327,10 @@ def find_entropy_prob_context_word_predict(model):
                 'ngram_context': ngram_element
             })
 
-    for entry in ngram_data:
-        print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
-        print(f"Probability Distribution: {entry['probability_distribution']}")
-        print(f"N-gram Context: {entry['ngram_context']}\n")
+    # for entry in ngram_data:
+    #     print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
+    #     print(f"Probability Distribution: {entry['probability_distribution']}")
+    #     print(f"N-gram Context: {entry['ngram_context']}\n")
 
     with open(f'entropy_data_{dataset}_{init_from}.json', 'w') as fp:
         json.dump(ngram_data, fp)
@@ -357,7 +357,10 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         if validation_flag:
             losses = estimate_validation_loss()
+            with open(f'training_{dataset}_{init_from}.txt', "a") as myfile:
+                myfile.write(f"\nstep {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
             if wandb_log:
                 wandb.log({
                     "iter": iter_num,
@@ -448,6 +451,8 @@ while True:
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
+        with open(f'training_{dataset}_{init_from}.txt', "a") as myfile:
+            myfile.write(f"\niter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1

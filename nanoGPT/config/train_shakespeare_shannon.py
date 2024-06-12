@@ -2,7 +2,7 @@ out_dir = 'out-shakespeare-shannon'
 eval_interval = 250 # keep frequent because we'll overfit
 eval_iters = 200
 log_interval = 10 # don't print too too often
-init_from = 'resume'
+#init_from = 'resume'
 
 # we expect to overfit on this small dataset, so only save when val improves
 always_save_checkpoint = False
