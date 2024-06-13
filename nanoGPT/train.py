@@ -313,21 +313,20 @@ def compute_shannon_entropy(probs):
 
 def find_entropy_prob_context_word_predict(model):
     n_gram_list_row = collect_n_grams_from_pkl()
-    ngram_data = [[] for i in range(len(n_gram_list_row))]
-    index = 0
+    ngram_data = []
     for ngrams_of_size in n_gram_list_row:
-        index = index + 1
+        ngram_data_for_size_n = []
         for ngram_element in ngrams_of_size:
             ngram_prob = get_ngram_probs(model, ngram_element)
             entropy = compute_shannon_entropy(ngram_prob)
             predicted_word = ngram_prob.argmax().item()
-            ngram_data[index].append(list({
+            ngram_data_for_size_n.append({
                 'predicted_word': predicted_word,
                 'probability_distribution': ngram_prob.tolist(),
                 'entropy': entropy,
                 'ngram_context': ngram_element
-            }))
-
+            })
+        ngram_data.append(ngram_data_for_size_n)
     # for entry in ngram_data:
     #     print(f"Predicted Word: {entry['predicted_word']}, Entropy: {entry['entropy']:.4f}")
     #     print(f"Probability Distribution: {entry['probability_distribution']}")
@@ -462,6 +461,26 @@ while True:
     if iter_num > max_iters:
         break
 
-find_entropy_prob_context_word_predict(model)
+
+def calculate_entropy_average():
+    with open(f'entropy_data_{dataset}_{init_from}.json', 'r') as fp:
+        n_gram_list_row = json.load(fp=fp)
+        for ngrams_of_size in n_gram_list_row:
+            total_entropy_for_n = 0.0
+            n_gram_context_length = 0
+            for ngram_element in ngrams_of_size:
+                total_entropy_for_n = total_entropy_for_n + ngram_element["entropy"]
+                n_gram_context_length = len(ngram_element["ngram_context"])
+            average_entropy = total_entropy_for_n / len(ngrams_of_size)
+            with open(f'training_{dataset}_{init_from}.txt', "a") as myfile:
+                myfile.write(f"\nAverage entropy during testing for n = {n_gram_context_length}: {average_entropy:.10f}")
+
+
+if pkl_file_path != '':
+    find_entropy_prob_context_word_predict(model)
+    calculate_entropy_average()
+else:
+    print(f"skipping: find_entropy_prob_context_word_predict(), since pkl_file_path is: {pkl_file_path}")
+
 if ddp:
     destroy_process_group()

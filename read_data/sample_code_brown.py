@@ -19,14 +19,3 @@ def get_train_test_data():
     train_set, test_set = train_test_split(corpus_tokenized, ratio=0.7)
 
     return train_set, test_set
-
-def process_json_find_average_entropy():
-    init_from = ['scratch', 'gpt2']
-    for init_mode in init_from:
-        with open(f'entropy_data_{dataset}_{init_mode}.json', 'r') as fp:
-            lists = json.load(fp=fp)
-            for n_gram_size in n_gram_
-                print(lists[0]['entropy'])
-if __name__ == '__main__':
-    dataset = 'brown_shannon'
-    process_json_find_average_entropy(dataset)

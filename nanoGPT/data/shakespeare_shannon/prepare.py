@@ -3,7 +3,7 @@ import pickle
 import requests
 import numpy as np
 import sys
-sys.path.insert(1, 'C:/Users/delli7desktop/Documents/GitHub/EEC-289A---Final-Project/read_data')
+sys.path.insert(1, 'C:/Users/delli7/Documents/GitHub/EEC-289A---Final-Project/read_data')
 
 from sample_code_shakespeare import get_train_test_data, extract_unique_n_minus_1_grams
 
