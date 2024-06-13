@@ -38,7 +38,7 @@ class TextDataset(Dataset):
         self.n_gram = n_gram
 
         tokens = tokenizer.tokenize(processed_text)
-        for i in range(len(tokens) - n_gram):
+        for i in range(len(tokens) - n_gram + 1):
             input_tokens = tokens[i:i + (n_gram - 1)]
             target_token = tokens[i + (n_gram - 1)]
             input_ids = tokenizer.convert_tokens_to_ids(input_tokens)
@@ -53,8 +53,8 @@ class TextDataset(Dataset):
         return torch.tensor(input_ids, dtype=torch.long), torch.tensor(target_id, dtype=torch.long)
 
 def train(model, tokenizer, dataset, epochs=5, batch_size=32, lr=5e-5):
-    train_size = int(0.7 * len(dataset)) 
-    test_size = len(dataset) - train_size 
+    train_size = int(0.7 * len(dataset))
+    test_size = len(dataset) - train_size
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -64,13 +64,16 @@ def train(model, tokenizer, dataset, epochs=5, batch_size=32, lr=5e-5):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0,
                                                 num_training_steps=len(train_loader) * epochs)
 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+
     model.train()
     for epoch in range(epochs):
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs}")
         for batch in progress_bar:
             inputs, targets = batch
-            inputs = inputs.to(model.device)
-            targets = targets.to(model.device)
+            inputs = inputs.to(device)
+            targets = targets.to(device)
             outputs = model(inputs, labels=inputs)
             loss = outputs.loss
 
@@ -85,8 +88,8 @@ def train(model, tokenizer, dataset, epochs=5, batch_size=32, lr=5e-5):
     with torch.no_grad():
         for batch in test_loader:
             inputs, targets = batch
-            inputs = inputs.to(model.device)
-            targets = targets.to(model.device)
+            inputs = inputs.to(device)
+            targets = targets.to(device)
             outputs = model(inputs, labels=inputs)
             total_loss += outputs.loss.item()
 
@@ -96,10 +99,12 @@ def train(model, tokenizer, dataset, epochs=5, batch_size=32, lr=5e-5):
     return test_dataset
 
 def print_probabilities(model, tokenizer, dataset, n_gram=3):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
     model.eval()
     with torch.no_grad():
         for input_ids, target_id in dataset:
-            input_tensor = input_ids.unsqueeze(0).to(model.device)
+            input_tensor = input_ids.unsqueeze(0).to(device)
 
             outputs = model(input_tensor)
             logits = outputs.logits[0, -1, :]
@@ -111,7 +116,6 @@ def print_probabilities(model, tokenizer, dataset, n_gram=3):
                 if char in 'abcdefghijklmnopqrstuvwxyz ':
                     print(f"{char}: {prob:.4f}")
             print("\n")
-
 
 text = ' '.join(brown.words())
 
