@@ -383,8 +383,12 @@ class GPT(nn.Module):
             config_args['dropout'] = override_args['dropout']
 
         if 'vocab_size' in override_args:
-            print(f"overriding vocab_size rate to {override_args['vocab_size']}")
-            config_args['vocab_size'] = override_args['vocab_size']
+            if override_args['vocab_size'] is not None:
+                print(f"overriding vocab_size rate to {override_args['vocab_size']}")
+                config_args['vocab_size'] = override_args['vocab_size']
+            else:
+                override_args['vocab_size'] = 50257
+                config_args['vocab_size'] = override_args['vocab_size']
 
         # create a from-scratch initialized minGPT model
         config = GPTConfig(**config_args)
