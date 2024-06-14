@@ -1,1 +1,1 @@
-finetune_shakespeare_shannon.py
+distilGPT_train from scratch & with fine tuning_store model.py
