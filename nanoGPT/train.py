@@ -50,7 +50,7 @@ dataset = 'openwebtext'
 gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
-
+pt_file_name = ''
 # model
 n = 3
 wind = 0
@@ -181,7 +181,7 @@ if init_from == 'scratch':
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, f'ckpt_{dataset}_{init_from}.pt')
+    ckpt_path = os.path.join(out_dir, f'{pt_file_name}.pt')
     checkpoint = torch.load(ckpt_path, map_location=device)
     checkpoint_model_args = checkpoint['model_args']
     # force these config attributes to be equal otherwise we can't even resume training
