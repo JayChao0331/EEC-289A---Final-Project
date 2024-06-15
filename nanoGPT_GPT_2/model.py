@@ -362,11 +362,7 @@ class GPT(nn.Module):
         assert model_type in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
         override_args = override_args or {}  # default to empty dict
         # only dropout can be overridden see more notes below
-<<<<<<< HEAD
-        assert all(k == 'dropout' for k in override_args)
-=======
         #assert all(k == 'dropout' for k in override_args)
->>>>>>> 73f3ea2e7b207c66643ee9352845e7cfdc7db648
         from transformers import GPT2LMHeadModel
         print("loading weights from pretrained gpt: %s" % model_type)
 
@@ -381,12 +377,6 @@ class GPT(nn.Module):
         config_args['vocab_size'] = 50257  # always 50257 for GPT model checkpoints
         config_args['block_size'] = 1024  # always 1024 for GPT model checkpoints
         config_args['bias'] = True  # always True for GPT model checkpoints
-<<<<<<< HEAD
-        # we can override the dropout rate, if desired
-        if 'dropout' in override_args:
-            print(f"overriding dropout rate to {override_args['dropout']}")
-            config_args['dropout'] = override_args['dropout']
-=======
 
         if 'dropout' in override_args:
             print(f"overriding dropout rate to {override_args['dropout']}")
@@ -400,7 +390,6 @@ class GPT(nn.Module):
                 override_args['vocab_size'] = 50257
                 config_args['vocab_size'] = override_args['vocab_size']
 
->>>>>>> 73f3ea2e7b207c66643ee9352845e7cfdc7db648
         # create a from-scratch initialized minGPT model
         config = GPTConfig(**config_args)
         model = GPT(config)
@@ -409,11 +398,7 @@ class GPT(nn.Module):
         sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')]  # discard this mask / buffer, not a param
 
         # init a huggingface/transformers model
-<<<<<<< HEAD
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
-=======
         model_hf = GPT2LMHeadModel.from_pretrained(model_type, vocab_size=override_args['vocab_size'], ignore_mismatched_sizes=True)
->>>>>>> 73f3ea2e7b207c66643ee9352845e7cfdc7db648
         sd_hf = model_hf.state_dict()
 
         # copy while ensuring all of the parameters are aligned and match in names and shapes

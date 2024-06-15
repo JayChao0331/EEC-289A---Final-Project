@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# EEC-289A---Final-Project
-=======
 # EEC-289A---Final-Project: nanoGPT
 
 ![nanoGPT](assets/nanogpt.jpg)
@@ -227,4 +224,3 @@ For more questions/discussions feel free to stop by **#nanoGPT** on Discord:
 ## acknowledgements
 
 All nanoGPT experiments are powered by GPUs on [Lambda labs](https://lambdalabs.com), my favorite Cloud GPU provider. Thank you Lambda labs for sponsoring nanoGPT!
->>>>>>> 73f3ea2e7b207c66643ee9352845e7cfdc7db648
