@@ -1,3 +1,9 @@
+## Install environment
+- Create a conda environment with Python=3.8
+```
+pip3 install -r requirements.txt
+```
+
 ## Calculate theoretical entropy upper and lower bounds derived by Shannon
 
 ### Calculate the Shannon entropy upper and lower bounds using the Brown dataset
