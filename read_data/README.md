@@ -1,6 +1,6 @@
 # Read data
 
-### We need to use the same data split for training & testing to run our experiments
+### We need to use the same data split for training & testing to run our experiments.
 
 ### Brown dataset
 - from read_brown.py import all the functions
