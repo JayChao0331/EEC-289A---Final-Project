@@ -1,6 +1,6 @@
 ### Calculate theoretical entropy upper and lower bounds derived by Shannon
 
-### Calculate the Shannon entropy upper and lower bounds using the Brown dataset
+#### Calculate the Shannon entropy upper and lower bounds using the Brown dataset
 ```
 python3 main_brown.py
 ```
