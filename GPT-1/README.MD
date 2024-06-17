@@ -10,6 +10,7 @@ python3 main_brown.py
 ```
 python3 main_shakespeare.py
 ```
+- 
 
 ## GPT-1 experiments for N-gram prediction
 
