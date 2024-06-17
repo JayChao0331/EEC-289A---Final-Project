@@ -4,6 +4,7 @@
 ```
 python3 main_brown.py
 ```
+- line 114: Set N=2 for bi-gram, and set N=3 for tri-gram.
 
 ### Calculate the Shannon entropy upper and lower bounds using the Shakespeare dataset
 ```
