@@ -9,13 +9,13 @@ import torch.nn as nn
 import torch.optim as optim
 from transformers import OpenAIGPTLMHeadModel, OpenAIGPTConfig
 
-from read_shakespeare import extract_sentences_from_work, clean_text, validate_text, train_test_split
+from read_data.read_shakespeare import extract_sentences_from_work, clean_text, validate_text, train_test_split
 
 
 # Hyper-parameters
 N = 2
 pretrained = True
-num_epochs = 15
+num_epochs = 10
 
 
 def extract_unique_n_minus_1_grams(corpus, n):

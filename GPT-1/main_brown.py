@@ -2,7 +2,7 @@ import math
 from nltk.corpus import brown
 from collections import defaultdict, Counter
 
-from read_brown import preprocess_word, preprocess_corpus, tokenizer, train_test_split
+from read_data.read_brown import preprocess_word, preprocess_corpus, tokenizer, train_test_split
 
 
 

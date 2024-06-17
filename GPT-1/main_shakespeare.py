@@ -2,7 +2,7 @@ import math
 from nltk.corpus import shakespeare
 from collections import defaultdict, Counter
 
-from read_shakespeare import extract_sentences_from_work, clean_text, validate_text, train_test_split
+from read_data.read_shakespeare import extract_sentences_from_work, clean_text, validate_text, train_test_split
 
 
 def extract_unique_n_minus_1_grams(corpus, n):
@@ -123,7 +123,7 @@ if __name__ == '__main__':
     print('Testing set: {}\n'.format(len(test_set)))
 
     # Build Ngram Model
-    N = 3
+    N = 2
     ngrams = build_ngrams(train_set, n=N)
     n_minus_1_grams_freq_normalized = extract_unique_n_minus_1_grams(test_set, n=N)
 

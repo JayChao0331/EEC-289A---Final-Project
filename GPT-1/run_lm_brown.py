@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 from transformers import OpenAIGPTLMHeadModel, OpenAIGPTConfig
 
-from read_brown import preprocess_word, preprocess_corpus, tokenizer, train_test_split
+from read_data.read_brown import preprocess_word, preprocess_corpus, tokenizer, train_test_split
 
 
 # Hyper-parameters
