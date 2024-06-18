@@ -1,3 +1,4 @@
+## Re-estimate the Shannon Entropy Bounds of English Corpus using Large Language Models
 * Shannon entropy lower bounds and upper bounds and the GPT-1 experiments are implemented in the GPT-1 folder by Yu-Chieh Chao
 * The nanoGPT and GPT-2 experiments are implemented in the nanoGPT_GPT_2 folder by Henry Chou
 * The distillGPT experiments are implemented in the distillGPT folder by Cheng-Hao Tsai
